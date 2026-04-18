@@ -263,43 +263,83 @@ static void StopMon(){
 // ====== 登录验证 ======
 // ====== 登录验证（临时跳过，方便调试）======
 static int VerifyCard(const char* kami){
-    (void)kami;
-    Log("临时跳过验证（调试模式）");
-    return 0; // 临时直接返回成功，后面接入微验再改回来
+    char ts[32]; sprintf(ts,"%ld",(long)time(NULL));
+    char cn[MAX_COMPUTERNAME_LENGTH+1]; DWORD cnlen=sizeof(cn);
+    GetComputerNameA(cn,&cnlen);
+    // markcode: 简单用机器名
+    char mc[256]; sprintf(mc,"%s",cn);
+    // 签名: md5("kami=xxx&markcode=xxx&t=xxx&APPKEY)
+    char ss[512]; sprintf(ss,"kami=%s&markcode=%s&t=%s&%s",kami,mc,ts,"00INaa4ja01VtNiy");
+    char sg[64]; CalcMD5(ss,sg);
+    char url[4096];
+    sprintf(url,"http://wy.llua.cn/api/?id=kmlogon&app=61572&kami=%s&markcode=%s&t=%s&sign=%s",
+        kami,mc,ts,sg);
+    AddLog(L"[*] 正在连接服务器...");
+    char resp[8192]={0};
+    if(HttpGet(url,resp,sizeof(resp))!=0){
+        AddLog(L"[!] 网络连接失败");
+        return -1;
+    }
+    AddLog(L"[*] 服务器响应: %.100s",resp);
+    int code=JInt(resp,"code");
+    if(code==200){
+        char vip[64]={0}; JStr(resp,"vip",vip,sizeof(vip));
+        if(strlen(vip)>0){
+            time_t t=atoll(vip); struct tm* tm=localtime(&t);
+            char rd[64]; strftime(rd,sizeof(rd),"%Y-%m-%d %H:%M:%S",tm);
+            AddLog(L"[*] 到期时间: %S",rd);
+        }
+        AddLog(L"[*] 验证成功!");
+        return 0;
+    } else {
+        char msg[256]={0}; JStr(resp,"msg",msg,sizeof(msg));
+        if(strlen(msg)==0){
+            // 手动解析 msg 字段
+            const char* mp=strstr(resp,"\"msg\"");
+            if(mp){
+                const char* pp=strchr(mp,'"'); if(pp){ pp=strchr(pp+1,'"'); if(pp){
+                    pp++; const char* e=pp; while(*e&&*e!='"') e++;
+                    int l=(int)(e-pp); if(l<256){strncpy(msg,pp,l);msg[l]=0;}
+                }}
+            }
+        }
+        AddLog(L"[!] 验证失败: %S (code=%d)",msg,code);
+        return -1;
+    }
 }
 
 // ====== 登录窗口 ======
-static HWND g_hLoginEdit=NULL;
-static int g_LoginOK=0;
+static HWND g_h登录Edit=NULL;
+static int g_登录OK=0;
 
-static LRESULT CALLBACK LoginProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
+static LRESULT CALLBACK 登录Proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
     (void)lp;
     if(msg==WM_CREATE){
         HFONT hF=CreateFontW(14,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Microsoft YaHei UI");
-        CreateWindowW(L"static",L"Card Key:",
+        CreateWindowW(L"static",L"卡密:",
             WS_CHILD|WS_VISIBLE,20,30,80,20,hwnd,NULL,NULL,NULL);
-        g_hLoginEdit=CreateWindowW(L"edit",L"",
+        g_h登录Edit=CreateWindowW(L"edit",L"",
             WS_CHILD|WS_VISIBLE|WS_BORDER|ES_AUTOHSCROLL,
             20,52,260,24,hwnd,(HMENU)1,NULL,NULL);
-        HWND hBtn=CreateWindowW(L"button",L"Login",
+        HWND hBtn=CreateWindowW(L"button",L"登录",
             WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
             120,90,80,30,hwnd,(HMENU)2,NULL,NULL);
         SendMessageW(GetDlgItem(hwnd,1),WM_SETFONT,(WPARAM)hF,TRUE);
         SendMessageW(GetDlgItem(hwnd,2),WM_SETFONT,(WPARAM)hF,TRUE);
         SendMessageW(hBtn,WM_SETFONT,(WPARAM)hF,TRUE);
-        SetFocus(g_hLoginEdit);
+        SetFocus(g_h登录Edit);
         Log("登录窗口已创建");
         return 0;
     }
     if(msg==WM_COMMAND){
         if(LOWORD(wp)==2){
-            WCHAR kw[64]={0};GetWindowTextW(g_hLoginEdit,kw,63);
+            WCHAR kw[64]={0};GetWindowTextW(g_h登录Edit,kw,63);
             if(wcslen(kw)==0){MessageBoxW(hwnd,L"请输入卡密",L"夜白过检测",MB_OK|MB_ICONWARNING);return 0;}
             char ka[64]={0};WideCharToMultiByte(CP_ACP,0,kw,-1,ka,sizeof(ka),NULL,NULL);
             EnableWindow(GetDlgItem(hwnd,2),0);
             Log("正在验证卡密");
             int ok=VerifyCard(ka);
-            if(ok==0){g_LoginOK=1;MessageBoxW(hwnd,L"验证成功!",L"夜白过检测",MB_OK|MB_ICONINFORMATION);
+            if(ok==0){g_登录OK=1;MessageBoxW(hwnd,L"验证成功!",L"夜白过检测",MB_OK|MB_ICONINFORMATION);
                 DestroyWindow(hwnd);Log("登录成功，正在关闭");}
             else{MessageBoxW(hwnd,L"验证失败",L"夜白过检测",MB_OK|MB_ICONERROR);EnableWindow(GetDlgItem(hwnd,2),1);}
             return 0;
@@ -433,13 +473,35 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE hp,LPWSTR cl,int ns){
     if(!RegisterClassExW(&mwc)){Log("RegisterClassExW main FAILED");MessageBoxW(NULL,L"Reg failed",L"Error",MB_OK);return 1;}
     Log("Main class registered");
 
+    // 注册登录窗口类
+    WNDCLASSEXW lwc={0};lwc.cbSize=sizeof(WNDCLASSEXW);
+    lwc.lpfnWndProc=登录Proc;lwc.hInstance=hInst;
+    lwc.hCursor=LoadCursor(NULL,IDC_ARROW);
+    lwc.hbrBackground=(HBRUSH)(COLOR_BTNFACE+1);
+    lwc.lpszClassName=L"YeBai登录";
+    if(!RegisterClassExW(&lwc)){MessageBoxW(NULL,L"注册登录窗口失败",L"夜白过检测",MB_OK|MB_ICONERROR);return 1;}
+
     int sw=GetSystemMetrics(SM_CXSCREEN),sh=GetSystemMetrics(SM_CYSCREEN);
+    // 先显示登录窗口
+    HWND h登录=CreateWindowExW(0,L"YeBai登录",L"夜白过检测 - 登录",
+        WS_POPUP|WS_CAPTION|WS_SYSMENU,
+        (sw-320)/2,(sh-180)/2,320,180,NULL,NULL,hInst,NULL);
+    if(!h登录){MessageBoxW(NULL,L"创建登录窗口失败",L"夜白过检测",MB_OK|MB_ICONERROR);return 1;}
+    ShowWindow(h登录,SW_SHOW);UpdateWindow(h登录);
+
+    // 登录消息循环
+    MSG lm;
+    while(IsWindow(h登录) && GetMessage(&lm,NULL,0,0)){
+        TranslateMessage(&lm);DispatchMessage(&lm);
+    }
+    if(!g_登录OK){return 0;} // 登录取消则退出程序
+
+    // 登录成功后显示主窗口
     HWND hMain=CreateWindowExW(0,L"YeBaiMain",L"夜白过检测 1.0",
         WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,
         (sw-WIN_WIDTH)/2,(sh-WIN_HEIGHT)/2,
         WIN_WIDTH,WIN_HEIGHT,NULL,NULL,hInst,NULL);
-    if(!hMain){Log("CreateWindowExW main FAILED");MessageBoxW(NULL,L"Main window failed",L"Error",MB_OK);return 1;}
-    Log("Main window created, showing");
+    if(!hMain){MessageBoxW(NULL,L"创建主窗口失败",L"夜白过检测",MB_OK|MB_ICONERROR);return 1;}
     ShowWindow(hMain,SW_SHOW);UpdateWindow(hMain);
 
     MSG m;
