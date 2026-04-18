@@ -350,15 +350,25 @@ static void StopMon() {
     if (g_Running) { InterlockedExchange(&g_Running, 0); AddLog(L"正在停止..."); }
 }
 
+// ====== 获取磁盘序列号 ======
+static int GetDiskSerialNo(char* out, int outSize) {
+    // 获取 C: 盘的卷序列号
+    DWORD volSer = 0;
+    GetVolumeInformationW(L"C:\\", NULL, 0, &volSer, NULL, NULL, NULL, 0);
+    if (volSer == 0) volSer = GetTickCount();
+    sprintf(out, "%08lX", volSer);
+    return 0;
+}
+
 // ====== V2 验证 ======
 static int VerifyKamiV2(const char* kami) {
     AddLog(L"[*] 正在连接服务器...");
 
     char ts[32]; sprintf(ts, "%ld", (long)time(NULL));
 
-    // markcode: 机器名
-    char cn[MAX_COMPUTERNAME_LENGTH + 1]; DWORD cnlen = sizeof(cn);
-    GetComputerNameA(cn, &cnlen);
+    // markcode: 磁盘序列号
+    char cn[32] = {0};
+    GetDiskSerialNo(cn, sizeof(cn));
 
     // value: 随机数
     char value[32]; sprintf(value, "%ld", (long)(GetTickCount() % 1000000));
