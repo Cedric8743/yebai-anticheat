@@ -45,8 +45,6 @@ static HANDLE g_hMonThread=NULL;
 static WCHAR g_szLog[8192]={0};
 static CRITICAL_SECTION g_csLog;
 static int g_LoginOK=0;
-static char g_LastResp[4096]={0};
-static char g_DebugInfo[512]={0};
 
 // ====== 日志 ======
 static void AddLog(const WCHAR* fmt,...){
@@ -455,51 +453,7 @@ static int VerifyKamiV2(const char* kami) {
     }
 }
 
-// ====== 登录窗口 ======
-static HWND g_hLoginEdit = NULL;
-static LRESULT CALLBACK LoginProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    (void)lp;
-    if (msg == WM_CREATE) {
-        HFONT hF = CreateFontW(14, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
-        CreateWindowW(L"static", L"卡密:", WS_CHILD | WS_VISIBLE, 20, 30, 80, 20, hwnd, NULL, NULL, NULL);
-        g_hLoginEdit = CreateWindowW(L"edit", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-            20, 52, 260, 24, hwnd, (HMENU)1, NULL, NULL);
-        HWND hBtn = CreateWindowW(L"button", L"登录", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            120, 90, 80, 30, hwnd, (HMENU)2, NULL, NULL);
-        HWND hStatus = CreateWindowW(L"static", L"",
-            WS_CHILD | WS_VISIBLE | SS_LEFT,
-            20, 125, 280, 30, hwnd, (HMENU)3, NULL, NULL);
-        SendMessageW(GetDlgItem(hwnd, 1), WM_SETFONT, (WPARAM)hF, TRUE);
-        SendMessageW(GetDlgItem(hwnd, 2), WM_SETFONT, (WPARAM)hF, TRUE);
-        SendMessageW(hBtn, WM_SETFONT, (WPARAM)hF, TRUE);
-        SendMessageW(hStatus, WM_SETFONT, (WPARAM)hF, TRUE);
-        SetFocus(g_hLoginEdit);
-        return 0;
-    }
-    if (msg == WM_COMMAND) {
-        if (LOWORD(wp) == 2) {
-            WCHAR kw[64] = { 0 }; GetWindowTextW(g_hLoginEdit, kw, 63);
-            if (wcslen(kw) == 0) { MessageBoxW(hwnd, L"请输入卡密", L"夜白过检测", MB_OK | MB_ICONWARNING); return 0; }
-            char ka[64] = { 0 }; WideCharToMultiByte(CP_ACP, 0, kw, -1, ka, sizeof(ka), NULL, NULL);
-            EnableWindow(GetDlgItem(hwnd, 2), 0);
-            int ok = VerifyKamiV2(ka);
-            if (ok == 0) { g_LoginOK = 1; MessageBoxW(hwnd, L"验证成功!", L"夜白过检测", MB_OK | MB_ICONINFORMATION);
-                DestroyWindow(hwnd); }
-            else {
-                wchar_t wstatus[512] = {0};
-                // 合并显示：原文参数 + 服务器响应
-                char combined[1024];
-                sprintf(combined, "原文: %.200s\n响应: %.200s", g_DebugInfo, g_LastResp);
-                mbstowcs(wstatus, combined, 511);
-                SetWindowTextW(GetDlgItem(hwnd, 3), wstatus);
-                MessageBoxW(hwnd, L"验证失败", L"夜白过检测", MB_OK | MB_ICONERROR);
-                EnableWindow(GetDlgItem(hwnd, 2), 1);
-            }
-            return 0;
-        }
-    }
-    return DefWindowProcW(hwnd, msg, wp, lp);
-}
+// 登录窗口已禁用
 
 // ====== 主窗口 ======
 static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
