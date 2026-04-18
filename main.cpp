@@ -1,5 +1,5 @@
 /*
- * YeBai AntiCheat 1.0 - Debug Build
+ * 夜白过检测 1.0 - Debug Build
  * Compile: x86_64-w64-mingw32-g++ -mwindows -municode -static -o YebaiAntiCheat.exe main.cpp -lwininet -ladvapi32 -lcomctl32
  */
 #define WIN32_LEAN_AND_MEAN
@@ -7,6 +7,7 @@
 #include <wininet.h>
 #include <aclapi.h>
 #include <sddl.h>
+#include <shellapi.h>
 #include <tlhelp32.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +18,7 @@
 
 #pragma comment(lib, "wininet.lib")
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "shell32.lib")
 
 // ====== 日志文件 ======
 static FILE* g_logFile = NULL;
@@ -41,7 +43,7 @@ static void LogW(const WCHAR* fmt, ...) {
 
 // ====== 配置 ======
 #define CFG_APPKEY     "00INaa4ja01VtNiy"
-#define WIN_TITLE_W    L"YeBai AntiCheat 1.0"
+#define WIN_TITLE_W    L"夜白过检测 1.0"
 #define WIN_WIDTH      420
 #define WIN_HEIGHT     355
 #define ACE_FOLDER     L"C:\\Program Files\\AntiCheatExpert"
@@ -50,7 +52,7 @@ static void LogW(const WCHAR* fmt, ...) {
 // ====== 全局 ======
 static HWND g_hStatus = NULL;
 static HWND g_hBtnStart = NULL;
-static HWND g_hBtnExit = NULL;
+static HWND g_hBtn退出程序 = NULL;
 static volatile LONG g_Running = 0;
 static HANDLE g_hMonThread = NULL;
 static WCHAR g_szLog[8192] = {0};
@@ -163,33 +165,60 @@ static int IsRunning(const WCHAR* n){
     CloseHandle(h);return f;
 }
 
-// ====== 权限 ======
+// ====== 权限（使用 icacls 命令）======
+static void KillGame(){
+    HANDLE h=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
+    if(h==INVALID_HANDLE_VALUE)return;
+    PROCESSENTRY32W pe={sizeof(PROCESSENTRY32W)};BOOL ok=Process32FirstW(h,&pe);
+    while(ok){
+        if(wcsicmp(pe.szExeFile,GAME_PROC)==0){
+            HANDLE hp=OpenProcess(PROCESS_TERMINATE,FALSE,pe.th32ProcessID);
+            if(hp){TerminateProcess(hp,0);CloseHandle(hp);}
+            break;
+        }
+        ok=Process32Next(h,&pe);
+    }
+    CloseHandle(h);
+}
 static int LockACE(){
-    Log("LockACE: starting");
-    if(!PathExistsW(ACE_FOLDER)){Log("LockACE: folder not found");return -1;}
-    const WCHAR* sddl=L"D:(Deny 0x1fffff:(NP)WD)";
-    PSECURITY_DESCRIPTOR pSD=NULL;ULONG sz=0;
-    if(!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl,SDDL_REVISION_1,&pSD,&sz)){
-        Log("LockACE: ConvertStringSecurityDescriptor failed GLE=%d",GetLastError());return -1;
-    }
-    PACL pDacl=NULL;BOOL dp=FALSE,dd=FALSE;
-    if(!GetSecurityDescriptorDacl(pSD,&dp,&pDacl,&dd)){
-        Log("LockACE: GetSecurityDescriptorDacl failed");LocalFree(pSD);return -1;
-    }
-    DWORD r=SetNamedSecurityInfoW((LPWSTR)ACE_FOLDER,SE_FILE_OBJECT,
-        DACL_SECURITY_INFORMATION|PROTECTED_DACL_SECURITY_INFORMATION,
-        NULL,NULL,pDacl,NULL);
-    LocalFree(pSD);
-    if(r!=ERROR_SUCCESS){Log("LockACE: SetNamedSecurityInfo failed r=%d",r);return -1;}
-    Log("LockACE: success");return 0;
+    Log("锁定ACE文件夹...");
+    if(!PathExistsW(ACE_FOLDER)){Log("ACE文件夹不存在");return -1;}
+    // icacls "C:\Program Files\AntiCheatExpert" /deny Everyone:F /C
+    // F = Full control, /C = continue on error (ignore files we can't touch)
+    WCHAR cmd[1024];
+    wsprintfW(cmd, L"icacls \"%s\" /deny Everyone:F /C", ACE_FOLDER);
+    Log("执行: %S", cmd);
+    SECURITY_ATTRIBUTES sa={sizeof(sa),NULL,TRUE};
+    STARTUPINFOW si={sizeof(si)}; PROCESS_INFORMATION pi={0};
+    si.dwFlags=STARTF_USESHOWWINDOW; si.wShowWindow=SW_HIDE;
+    BOOL ok=CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi);
+    if(!ok){Log("CreateProcess icacls 失败 GLE=%d",GetLastError());return -1;}
+    WaitForSingleObject(pi.hProcess,10000);
+    DWORD exitCode=0;
+    GetExitCodeProcess(pi.hProcess,&exitCode);
+    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    Log("icacls 退出码: %d", exitCode);
+    if(exitCode!=0){Log("icacls 锁定失败，退出码=%d",exitCode);return -1;}
+    Log("ACE文件夹已锁定");return 0;
 }
 static int UnlockACE(){
-    Log("UnlockACE: starting");
-    if(!PathExistsW(ACE_FOLDER)){Log("UnlockACE: folder gone, skip");return 0;}
-    DWORD r=SetNamedSecurityInfoW((LPWSTR)ACE_FOLDER,SE_FILE_OBJECT,
-        DACL_SECURITY_INFORMATION,NULL,NULL,NULL,NULL);
-    if(r!=ERROR_SUCCESS){Log("UnlockACE: failed r=%d",r);return -1;}
-    Log("UnlockACE: success");return 0;
+    Log("解锁ACE文件夹...");
+    if(!PathExistsW(ACE_FOLDER)){Log("ACE文件夹已不存在，跳过");return 0;}
+    // icacls "C:\Program Files\AntiCheatExpert" /remove:d Everyone /C
+    WCHAR cmd[1024];
+    wsprintfW(cmd, L"icacls \"%s\" /remove:d Everyone /C", ACE_FOLDER);
+    Log("执行: %S", cmd);
+    SECURITY_ATTRIBUTES sa={sizeof(sa),NULL,TRUE};
+    STARTUPINFOW si={sizeof(si)}; PROCESS_INFORMATION pi={0};
+    si.dwFlags=STARTF_USESHOWWINDOW; si.wShowWindow=SW_HIDE;
+    BOOL ok=CreateProcessW(NULL,cmd,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi);
+    if(!ok){Log("CreateProcess icacls 失败 GLE=%d",GetLastError());return -1;}
+    WaitForSingleObject(pi.hProcess,10000);
+    DWORD exitCode=0;
+    GetExitCodeProcess(pi.hProcess,&exitCode);
+    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    Log("icacls 退出码: %d", exitCode);
+    Log("ACE文件夹已解锁");return 0;
 }
 
 // ====== UI 日志 ======
@@ -207,73 +236,49 @@ static void ClsLog(){EnterCriticalSection(&g_csLog);g_szLog[0]=0;if(g_hStatus)Se
 // ====== 监控线程 ======
 static unsigned __stdcall MonThrd(void* a){
     (void)a;
-    Log("MonitorThread: start");
-    AddLog(L"[1/6] Cleaning ACE folder...");
+    Log("监控线程启动");
+    AddLog(L"【1/6】正在清理辅助残留...");
     DelFolderW(ACE_FOLDER);
-    AddLog(L"[1/6] Done");
-    AddLog(L"[2/6] Waiting for game...");
+    AddLog(L"【1/6】清理完成");
+    AddLog(L"【2/6】等待游戏启动...");
     DWORD st=GetTickCount();
     while(g_Running){
-        if(IsRunning(GAME_PROC)){AddLog(L"[2/6] Game detected!");break;}
-        if(GetTickCount()-st>600000){AddLog(L"[2/6] Timeout");InterlockedExchange(&g_Running,0);
-            if(g_hBtnStart){EnableWindow(g_hBtnStart,1);SetWindowTextW(g_hBtnStart,L"Start AntiCheat");}
+        if(IsRunning(GAME_PROC)){AddLog(L"【2/6】检测到游戏进程!");break;}
+        if(GetTickCount()-st>600000){AddLog(L"【2/6】等待超时");InterlockedExchange(&g_Running,0);
+            if(g_hBtnStart){EnableWindow(g_hBtnStart,1);SetWindowTextW(g_hBtnStart,L"开始过检测");}
             _endthreadex(0);return 0;}
         Sleep(500);
     }
-    if(!g_Running){AddLog(L"[2/6] Cancelled");_endthreadex(0);return 0;}
-    AddLog(L"[3/6] Waiting ACE folder (5s)...");Sleep(5000);
-    AddLog(L"[4/6] Locking ACE...");LockACE();
-    AddLog(L"[5/6] Monitoring exit...");
-    while(g_Running){if(!IsRunning(GAME_PROC)){AddLog(L"[5/6] Game exited!");break;}Sleep(1000);}
-    AddLog(L"[6/6] Unlocking and cleaning...");UnlockACE();DelFolderW(ACE_FOLDER);
+    if(!g_Running){AddLog(L"【2/6】用户取消");_endthreadex(0);return 0;}
+    AddLog(L"【3/6】等待辅助加载中...");Sleep(5000);
+    AddLog(L"【4/6】正在识别检测进程...");LockACE();
+    AddLog(L"【5/6】监控游戏中......");
+    while(g_Running){if(!IsRunning(GAME_PROC)){AddLog(L"【5/6】检测到游戏已退出!");break;}Sleep(1000);}
+    AddLog(L"【6/6】正在清理残留...");UnlockACE();DelFolderW(ACE_FOLDER);
     AddLog(L"=== Anti-cheat done! ===");
     InterlockedExchange(&g_Running,0);
-    if(g_hBtnStart){EnableWindow(g_hBtnStart,1);SetWindowTextW(g_hBtnStart,L"Start AntiCheat");}
-    Log("MonitorThread: end");
+    if(g_hBtnStart){EnableWindow(g_hBtnStart,1);SetWindowTextW(g_hBtnStart,L"开始过检测");}
+    Log("监控线程结束");
     _endthreadex(0);return 0;
 }
 static void StartMon(){
     if(g_hMonThread){CloseHandle(g_hMonThread);g_hMonThread=NULL;}
     InterlockedExchange(&g_Running,1);
-    ClsLog();AddLog(L"=== YeBai AntiCheat ===");AddLog(L"Start the game now...");
+    ClsLog();AddLog(L"=== 夜白过检测 ===");AddLog(L"请启动游戏...");
     unsigned tid=0;
     g_hMonThread=(HANDLE)_beginthreadex(NULL,0,MonThrd,NULL,0,&tid);
-    if(!g_hMonThread){AddLog(L"[!] Thread failed");InterlockedExchange(&g_Running,0);}
+    if(!g_hMonThread){AddLog(L"[!] 线程启动失败");InterlockedExchange(&g_Running,0);}
 }
 static void StopMon(){
-    if(g_Running){InterlockedExchange(&g_Running,0);AddLog(L"[*] Stopping...");}
+    if(g_Running){InterlockedExchange(&g_Running,0);AddLog(L"正在停止......");}
 }
 
 // ====== 登录验证 ======
+// ====== 登录验证（临时跳过，方便调试）======
 static int VerifyCard(const char* kami){
-    AddLog(L"[*] Verifying card...");
-    char ts[32];sprintf(ts,"%ld",(long)time(NULL));
-    char cn[MAX_COMPUTERNAME_LENGTH+1];DWORD cnlen=sizeof(cn);
-    GetComputerNameA(cn,&cnlen);char mc[256];sprintf(mc,"%s-PC",cn);
-    char ss[512];sprintf(ss,"kami=%s&markcode=%s&t=%s&%s",kami,mc,ts,CFG_APPKEY);
-    char sg[64];CalcMD5(ss,sg);
-    char url[4096];sprintf(url,"http://wy.llua.cn/api/?id=kmlogon&app=61572&kami=%s&markcode=%s&t=%s&sign=%s",kami,mc,ts,sg);
-    char resp[8192]={0};
-    if(HttpGet(url,resp,sizeof(resp))!=0){AddLog(L"[!] Network error");Log("VerifyCard: HTTP failed");return -1;}
-    AddLog(L"[*] Response: %.200S", resp);
-    int code=JInt(resp,"code");Log("VerifyCard: code=%d",code);
-    if(code==200){
-        char vip[64]={0};JStr(resp,"vip",vip,sizeof(vip));
-        if(strlen(vip)>0){
-            time_t t=atoll(vip);struct tm* tm=localtime(&t);char rd[64];strftime(rd,sizeof(rd),"%Y-%m-%d %H:%M:%S",tm);
-            AddLog(L"[*] Expiry: %S",rd);
-        }
-        AddLog(L"[*] Verified OK!");Log("VerifyCard: OK");return 0;
-    }else{
-        char msg[256]={0};JStr(resp,"msg",msg,sizeof(msg));
-        if(strlen(msg)==0){
-            const char* mp=strstr(resp,"\"msg\"");if(mp){
-                const char* pp=strchr(mp,'"');if(pp){pp=strchr(pp+1,'"');if(pp){
-                    pp++;const char* e=pp;while(*e&&*e!='"')e++;
-                    int l=(int)(e-pp);if(l<256){strncpy(msg,pp,l);msg[l]=0;}}}}
-        }
-        AddLog(L"[!] Failed: %S (code=%d)",msg,code);Log("VerifyCard: failed %s",msg);return -1;
-    }
+    (void)kami;
+    Log("临时跳过验证（调试模式）");
+    return 0; // 临时直接返回成功，后面接入微验再改回来
 }
 
 // ====== 登录窗口 ======
@@ -296,24 +301,24 @@ static LRESULT CALLBACK LoginProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
         SendMessageW(GetDlgItem(hwnd,2),WM_SETFONT,(WPARAM)hF,TRUE);
         SendMessageW(hBtn,WM_SETFONT,(WPARAM)hF,TRUE);
         SetFocus(g_hLoginEdit);
-        Log("LoginProc: WM_CREATE done");
+        Log("登录窗口已创建");
         return 0;
     }
     if(msg==WM_COMMAND){
         if(LOWORD(wp)==2){
             WCHAR kw[64]={0};GetWindowTextW(g_hLoginEdit,kw,63);
-            if(wcslen(kw)==0){MessageBoxW(hwnd,L"Enter card key",L"YeBai AntiCheat",MB_OK|MB_ICONWARNING);return 0;}
+            if(wcslen(kw)==0){MessageBoxW(hwnd,L"请输入卡密",L"夜白过检测",MB_OK|MB_ICONWARNING);return 0;}
             char ka[64]={0};WideCharToMultiByte(CP_ACP,0,kw,-1,ka,sizeof(ka),NULL,NULL);
             EnableWindow(GetDlgItem(hwnd,2),0);
-            Log("LoginProc: calling VerifyCard");
+            Log("正在验证卡密");
             int ok=VerifyCard(ka);
-            if(ok==0){g_LoginOK=1;MessageBoxW(hwnd,L"Verified OK!",L"YeBai AntiCheat",MB_OK|MB_ICONINFORMATION);
-                DestroyWindow(hwnd);Log("LoginProc: login OK, destroying window");}
-            else{MessageBoxW(hwnd,L"Verification failed",L"YeBai AntiCheat",MB_OK|MB_ICONERROR);EnableWindow(GetDlgItem(hwnd,2),1);}
+            if(ok==0){g_LoginOK=1;MessageBoxW(hwnd,L"验证成功!",L"夜白过检测",MB_OK|MB_ICONINFORMATION);
+                DestroyWindow(hwnd);Log("登录成功，正在关闭");}
+            else{MessageBoxW(hwnd,L"验证失败",L"夜白过检测",MB_OK|MB_ICONERROR);EnableWindow(GetDlgItem(hwnd,2),1);}
             return 0;
         }
     }
-    if(msg==WM_DESTROY){Log("LoginProc: WM_DESTROY");return 0;}
+    if(msg==WM_DESTROY){Log("登录窗口已销毁");return 0;}
     return DefWindowProcW(hwnd,msg,wp,lp);
 }
 
@@ -323,57 +328,115 @@ static LRESULT CALLBACK MainProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
     if(msg==WM_CREATE){
         hFTitle=CreateFontW(22,0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_DONTCARE,L"Microsoft YaHei UI");
         hFNorm=CreateFontW(13,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_DONTCARE,L"Microsoft YaHei UI");
-        CreateWindowW(L"static",L"YeBai AntiCheat 1.0",
+        CreateWindowW(L"static",L"夜白过检测 1.0",
             WS_CHILD|WS_VISIBLE|SS_CENTER,60,8,300,35,hwnd,NULL,NULL,NULL);
         CreateWindowW(L"static",L"Log:",
             WS_CHILD|WS_VISIBLE,15,50,40,20,hwnd,NULL,NULL,NULL);
         g_hStatus=CreateWindowW(L"edit",L"",
             WS_CHILD|WS_VISIBLE|WS_BORDER|ES_READONLY|ES_MULTILINE|ES_AUTOVSCROLL|WS_VSCROLL,
             15,72,WIN_WIDTH-30,WIN_HEIGHT-160,hwnd,(HMENU)10,NULL,NULL);
-        g_hBtnStart=CreateWindowW(L"button",L"Start AntiCheat",
+        g_hBtnStart=CreateWindowW(L"button",L"开始过检测",
             WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,30,WIN_HEIGHT-75,150,35,hwnd,(HMENU)20,NULL,NULL);
-        g_hBtnExit=CreateWindowW(L"button",L"Exit",
+        g_hBtn退出程序=CreateWindowW(L"button",L"退出程序",
             WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,WIN_WIDTH-180,WIN_HEIGHT-75,150,35,hwnd,(HMENU)21,NULL,NULL);
         SendMessageW(GetDlgItem(hwnd,10),WM_SETFONT,(WPARAM)hFTitle,TRUE);
         SendMessageW(GetDlgItem(hwnd,11),WM_SETFONT,(WPARAM)hFNorm,TRUE);
         SendMessageW(g_hStatus,WM_SETFONT,(WPARAM)hFNorm,TRUE);
         SendMessageW(g_hBtnStart,WM_SETFONT,(WPARAM)hFNorm,TRUE);
-        SendMessageW(g_hBtnExit,WM_SETFONT,(WPARAM)hFNorm,TRUE);
-        AddLog(L"=== YeBai AntiCheat 1.0 ===");
-        AddLog(L"Click [Start AntiCheat]");
-        AddLog(L"Then launch the game");
-        Log("MainProc: WM_CREATE done");
+        SendMessageW(g_hBtn退出程序,WM_SETFONT,(WPARAM)hFNorm,TRUE);
+        AddLog(L"=== 夜白过检测 1.0 ===");
+        AddLog(L"点击【开始过检测】按钮");
+        AddLog(L"然后启动游戏即可");
+        Log("主窗口已创建");
         return 0;
     }
     if(msg==WM_COMMAND){
         if(LOWORD(wp)==20){
-            if(!g_Running){StartMon();SetWindowTextW(g_hBtnStart,L"Stop AntiCheat");}
-            else{StopMon();SetWindowTextW(g_hBtnStart,L"Start AntiCheat");}
+            if(!g_Running){StartMon();SetWindowTextW(g_hBtnStart,L"停止过检测");}
+            else{StopMon();SetWindowTextW(g_hBtnStart,L"开始过检测");}
         }
         if(LOWORD(wp)==21){
+            // 退出时也要解锁+清理+杀进程
+            Log("用户点击退出，正在清理...");
+            UnlockACE();
+            DelFolderW(ACE_FOLDER);
+            KillGame();
             if(g_Running)StopMon();
             Sleep(200);
             DestroyWindow(hwnd);
         }
+    }
+    if(msg==WM_CLOSE){
+        Log("用户关闭窗口，正在清理...");
+        UnlockACE();
+        DelFolderW(ACE_FOLDER);
+        KillGame();
+        if(g_Running)StopMon();
+        Sleep(200);
+        DestroyWindow(hwnd);return 0;
     }
     if(msg==WM_DESTROY){DeleteObject(hFTitle);DeleteObject(hFNorm);PostQuitMessage(0);return 0;}
     return DefWindowProcW(hwnd,msg,wp,lp);
 }
 
 // ====== WinMain ======
+// 检查并请求管理员权限
+static int RequestAdmin(){
+    HANDLE hToken=0;
+    if(!OpenProcessToken(GetCurrentProcess(),TOKEN_ADJUST_PRIVILEGES|TOKEN_QUERY,&hToken)) return 0;
+    TOKEN_PRIVILEGES tp={1,{0,0,SE_PRIVILEGE_ENABLED}};
+    if(!LookupPrivilegeValueW(NULL,SE_SECURITY_NAME,&tp.Privileges[0].Luid)){CloseHandle(hToken);return 0;}
+    if(!AdjustTokenPrivileges(hToken,FALSE,&tp,sizeof(tp),NULL,0)){CloseHandle(hToken);return 0;}
+    CloseHandle(hToken); return 1;
+}
+static int IsAdmin(){
+    HANDLE hToken=0;
+    if(!OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&hToken)) return 0;
+    TOKEN_GROUPS* tg=(TOKEN_GROUPS*)malloc(1024);
+    DWORD sz=1024; int isAdm=0;
+    if(GetTokenInformation(hToken,TokenGroups,tg,1024,&sz)){
+        for(DWORD i=0;i<tg->GroupCount;i++){
+            if(tg->Groups[i].Sid==NULL) continue;
+            SID_NAME_USE snu;
+            WCHAR name[256]={0},dom[256]={0};
+            DWORD nsz=256,dsz=256;
+            if(LookupAccountSidW(NULL,tg->Groups[i].Sid,name,&nsz,dom,&dsz,&snu)){
+                if(wcscmp(name,L"Administrators")==0 || wcscmp(name,L"Admin")==0){
+                    isAdm=1; break;
+                }
+            }
+        }
+    }
+    free(tg); CloseHandle(hToken); return isAdm;
+}
+static int RequestElevation(){
+    WCHAR exePath[MAX_PATH];
+    GetModuleFileNameW(NULL,exePath,MAX_PATH);
+    SHELLEXECUTEINFOW sei={sizeof(sei),SEE_MASK_NOCLOSEPROCESS|SEE_MASK_FLAG_NO_UI};
+    sei.lpVerb=L"runas";
+    sei.lpFile=exePath;
+    sei.nShow=SW_SHOWNORMAL;
+    return ShellExecuteExW(&sei);
+}
+
 int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE hp,LPWSTR cl,int ns){
     (void)hp;(void)cl;(void)ns;
-    Log("=== wWinMain START ===");
-    InitializeCriticalSection(&g_csLog);
+    Log("=== 程序启动 ===");
 
-    // 注册登录窗口类
-    WNDCLASSEXW lwc={0};lwc.cbSize=sizeof(WNDCLASSEXW);
-    lwc.lpfnWndProc=LoginProc;lwc.hInstance=hInst;
-    lwc.hCursor=LoadCursor(NULL,IDC_ARROW);
-    lwc.hbrBackground=(HBRUSH)(COLOR_BTNFACE+1);
-    lwc.lpszClassName=L"YeBaiLogin";
-    if(!RegisterClassExW(&lwc)){Log("RegisterClassExW login FAILED");MessageBoxW(NULL,L"Reg failed",L"Error",MB_OK);return 1;}
-    Log("Login class registered");
+    // 检查管理员权限，没有则请求提权
+    if(!IsAdmin()){
+        Log("非管理员，正在请求提权...");
+        if(RequestElevation()){
+            Log("提权成功，正在重启");
+            return 0;
+        }
+        Log("提权被拒绝，继续运行");
+    } else {
+        Log("以管理员身份运行");
+    }
+    RequestAdmin(); // 启用 SE_SECURITY_NAME 特权
+    Log("=== 程序启动 ===");
+    InitializeCriticalSection(&g_csLog);
 
     // 注册主窗口类
     WNDCLASSEXW mwc={0};mwc.cbSize=sizeof(WNDCLASSEXW);
@@ -383,22 +446,8 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE hp,LPWSTR cl,int ns){
     if(!RegisterClassExW(&mwc)){Log("RegisterClassExW main FAILED");MessageBoxW(NULL,L"Reg failed",L"Error",MB_OK);return 1;}
     Log("Main class registered");
 
-    // 登录窗口
     int sw=GetSystemMetrics(SM_CXSCREEN),sh=GetSystemMetrics(SM_CYSCREEN);
-    HWND hLogin=CreateWindowExW(0,L"YeBaiLogin",L"YeBai AntiCheat - Login",
-        WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_EX_DLGMODALFRAME,
-        (sw-300)/2,(sh-170)/2,300,170,NULL,NULL,hInst,NULL);
-    if(!hLogin){Log("CreateWindowExW login FAILED GLE=%d",GetLastError());MessageBoxW(NULL,L"Login window failed",L"Error",MB_OK);return 1;}
-    Log("Login window created, showing");
-    ShowWindow(hLogin,SW_SHOW);UpdateWindow(hLogin);
-
-    // 登录消息循环
-    MSG m;
-    while(IsWindow(hLogin) && GetMessage(&m,NULL,0,0)){
-        TranslateMessage(&m);DispatchMessage(&m);
-    }
-    Log("Login loop exited, g_LoginOK=%d",g_LoginOK);
-    HWND hMain=CreateWindowExW(0,L"YeBaiAntiCheatMain",L"YeBai AntiCheat 1.0",
+    HWND hMain=CreateWindowExW(0,L"YeBaiMain",L"夜白过检测 1.0",
         WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX,
         (sw-WIN_WIDTH)/2,(sh-WIN_HEIGHT)/2,
         WIN_WIDTH,WIN_HEIGHT,NULL,NULL,hInst,NULL);
@@ -406,6 +455,7 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE hp,LPWSTR cl,int ns){
     Log("Main window created, showing");
     ShowWindow(hMain,SW_SHOW);UpdateWindow(hMain);
 
+    MSG m;
     while(GetMessage(&m,NULL,0,0)){
         TranslateMessage(&m);DispatchMessage(&m);
     }
