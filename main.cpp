@@ -21,24 +21,11 @@
 #pragma comment(lib, "shell32.lib")
 
 // ====== 日志文件 ======
-static FILE* g_logFile = NULL;
 static void Log(const char* fmt, ...) {
-    if (!g_logFile) g_logFile = fopen("yebai_log.txt", "a");
-    if (g_logFile) {
-        SYSTEMTIME st; GetLocalTime(&st);
-        fprintf(g_logFile, "[%02d:%02d:%02d] ", st.wHour, st.wMinute, st.wSecond);
-        va_list ap; va_start(ap, fmt); vfprintf(g_logFile, fmt, ap); va_end(ap);
-        fprintf(g_logFile, "\n"); fflush(g_logFile);
-    }
+    (void)fmt;
 }
 static void LogW(const WCHAR* fmt, ...) {
-    if (!g_logFile) g_logFile = fopen("yebai_log.txt", "a");
-    if (g_logFile) {
-        SYSTEMTIME st; GetLocalTime(&st);
-        fwprintf(g_logFile, L"[%02d:%02d:%02d] ", st.wHour, st.wMinute, st.wSecond);
-        va_list ap; va_start(ap, fmt); vfwprintf(g_logFile, fmt, ap); va_end(ap);
-        fwprintf(g_logFile, L"\n"); fflush(g_logFile);
-    }
+    (void)fmt;
 }
 
 // ====== 配置 ======
@@ -460,7 +447,6 @@ int WINAPI wWinMain(HINSTANCE hInst,HINSTANCE hp,LPWSTR cl,int ns){
         TranslateMessage(&m);DispatchMessage(&m);
     }
     DeleteCriticalSection(&g_csLog);
-    if(g_logFile){fclose(g_logFile);}
     Log("=== wWinMain END ===");
     return 0;
 }
