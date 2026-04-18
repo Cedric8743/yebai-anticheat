@@ -1,0 +1,13 @@
+#include <windows.h>
+
+1000 DIALOGEX 0, 0, 320, 180
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME
+CAPTION "夜白过检测 1.0 - 登录"
+FONT 9, "Microsoft YaHei UI"
+BEGIN
+    LTEXT           "卡密验证", -1, 120, 12, 80, 16, SS_CENTER
+    LTEXT           "请输入您的卡密:", -1, 20, 45, 100, 14
+    EDITTEXT        1001, 20, 62, 280, 22, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    DEFPUSHBUTTON   "登录", 1002, 120, 98, 80, 28, WS_TABSTOP
+    LTEXT           "夜白过检测 1.0", -1, 0, 155, 320, 14, SS_CENTER
+END
