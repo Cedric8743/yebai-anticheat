@@ -46,6 +46,7 @@ static WCHAR g_szLog[8192]={0};
 static CRITICAL_SECTION g_csLog;
 static int g_LoginOK=0;
 static char g_LastResp[4096]={0};
+static char g_DebugInfo[512]={0};
 
 // ====== 日志 ======
 static void AddLog(const WCHAR* fmt,...){
@@ -373,19 +374,22 @@ static int VerifyKamiV2(const char* kami) {
     // value: 随机数
     char value[32]; sprintf(value, "%ld", (long)(GetTickCount() % 1000000));
 
-    // sign = md5("kami=xxx&markcode=xxx&t=xxx&"+APPKEY)
+    // sign = md5(time + id + appkey + value)  按微验默认格式
     char ss[512];
-    sprintf(ss, "kami=%s&markcode=%s&t=%s&%s", kami, cn, ts, CFG_APPKEY);
+    sprintf(ss, "%s%s%s%s", ts, CFG_LOGIN_ID, CFG_APPKEY, value);
     char sign[64]; CalcMD5(ss, sign);
 
     // 构造原始参数
     char raw_params[4096];
     sprintf(raw_params, "id=%s&kami=%s&markcode=%s&t=%s&sign=%s&value=%s",
         CFG_LOGIN_ID, kami, cn, ts, sign, value);
-
-    AddLog(L"[*] 原始参数: %S", raw_params);
-
-    // 加密: hex(rc4(key2, hex(rc4(key1, raw_params))))
+    // 登录窗口状态文本显示原文（方便调试）
+    char dbg[512];
+    sprintf(dbg, "id=%s kami=%s mc=%s t=%s sign=%s val=%s",
+        CFG_LOGIN_ID, kami, cn, ts, sign, value);
+    strncpy(g_DebugInfo, dbg, sizeof(g_DebugInfo)-1);
+    AddLog(L"[*] 原文: id=%S kami=%S mc=%S t=%S sign=%S val=%S",
+        CFG_LOGIN_ID, kami, cn, ts, sign, value);
     unsigned char* buf1 = (unsigned char*)malloc(strlen(raw_params) + 1);
     memcpy(buf1, raw_params, strlen(raw_params) + 1);
     int len1 = (int)strlen(raw_params);
@@ -483,7 +487,10 @@ static LRESULT CALLBACK LoginProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 DestroyWindow(hwnd); }
             else {
                 wchar_t wstatus[512] = {0};
-                mbstowcs(wstatus, g_LastResp, (sizeof(wstatus)/sizeof(wchar_t)) - 1);
+                // 合并显示：原文参数 + 服务器响应
+                char combined[1024];
+                sprintf(combined, "原文: %.200s\n响应: %.200s", g_DebugInfo, g_LastResp);
+                mbstowcs(wstatus, combined, 511);
                 SetWindowTextW(GetDlgItem(hwnd, 3), wstatus);
                 MessageBoxW(hwnd, L"验证失败", L"夜白过检测", MB_OK | MB_ICONERROR);
                 EnableWindow(GetDlgItem(hwnd, 2), 1);
