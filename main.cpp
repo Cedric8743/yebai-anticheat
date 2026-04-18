@@ -24,7 +24,7 @@
 
 // ====== 配置 ======
 #define CFG_APPKEY     "g11eaea18d487e7b40ab6a53926"
-#define CFG_APITOKEN   "798a0ece954c6998664325b00d18de37"
+#define CFG_APITOKEN   "i4a8fef6a76b5680c6bf697"
 #define CFG_LOGIN_ID   "PyP0D00g00b"
 #define WIN_TITLE_W    L"夜白过检测 1.0"
 #define WIN_WIDTH      420
@@ -33,7 +33,7 @@
 #define GAME_PROC      L"NRC-Win64-Shipping.exe"
 
 // ====== V2 加密配置 ======
-static const char* RC4_KEY1 = "i4a8fef6a76b5680c6bf697";
+static const char* RC4_KEY1 = "798a0ece954c6998664325b00d18de37";
 static const char* RC4_KEY2 = "l75ef63432df68b6a964206a68eab84b56eac10";
 static const char* DEFBASE_TABLE1 = "IcMkVUu+f0L2FEazW1ljrbRmpDnO74hGdxekyHNiYJvXgCt6A5TBPs9S3QqZ8wo/";
 static const char* DEFBASE_TABLE2 = "OBFW80fQSaLheJRTulAX/iqgb6ZNUPGYpln my2zdV753xkCvM+EKDwsHj19ort4c";
