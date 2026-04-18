@@ -29,7 +29,7 @@ static void LogW(const WCHAR* fmt, ...) {
 }
 
 // ====== 配置 ======
-#define CFG_APPKEY     "00INaa4ja01VtNiy"
+#define CFG_APPKEY     "g11eaea18d487e7b40ab6a53926"
 #define WIN_TITLE_W    L"夜白过检测 1.0"
 #define WIN_WIDTH      420
 #define WIN_HEIGHT     355
@@ -269,7 +269,7 @@ static int VerifyCard(const char* kami){
     // markcode: 简单用机器名
     char mc[256]; sprintf(mc,"%s",cn);
     // 签名: md5("kami=xxx&markcode=xxx&t=xxx&APPKEY)
-    char ss[512]; sprintf(ss,"kami=%s&markcode=%s&t=%s&%s",kami,mc,ts,"00INaa4ja01VtNiy");
+    char ss[512]; sprintf(ss,"kami=%s&markcode=%s&t=%s&%s",kami,mc,ts,"g11eaea18d487e7b40ab6a53926");
     char sg[64]; CalcMD5(ss,sg);
     char url[4096];
     sprintf(url,"http://wy.llua.cn/api/?id=kmlogon&app=61572&kami=%s&markcode=%s&t=%s&sign=%s",
