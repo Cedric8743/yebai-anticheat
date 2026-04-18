@@ -45,6 +45,7 @@ static HANDLE g_hMonThread=NULL;
 static WCHAR g_szLog[8192]={0};
 static CRITICAL_SECTION g_csLog;
 static int g_LoginOK=0;
+static char g_LastResp[4096]={0};
 
 // ====== 日志 ======
 static void AddLog(const WCHAR* fmt,...){
@@ -192,37 +193,37 @@ static int defbase_decode(const char* in,int len,unsigned char* out,const char* 
 
 // ====== HTTP POST ======
 static int HttpPost(const char* url,const char* data,int dataLen,char* resp,int respSize){
-    URL_COMPONENTSA uc={0};uc.dwStructSize=sizeof(uc);
-    char host[256]={0},path[2048]={0};
-    const char* p=strstr(url,"://");const char* hs=p?p+3:url;
-    const char* ps=strchr(hs,'/');
-    if(ps){strncpy(host,hs,(int)(ps-hs));strncpy(path,ps,sizeof(path)-1);}
-    else{strncpy(host,hs,sizeof(host)-1);strcpy(path,"/");}
-    uc.lpszHostName=host;uc.dwHostNameLength=(DWORD)strlen(host);
-    uc.lpszUrlPath=path;uc.dwUrlPathLength=(DWORD)strlen(path);
+    // Parse URL: http://wy.llua.cn/v2/798a0ece954c6998664325b00d18de37
+    const char* p=strstr(url,"://"); if(!p) return -1;
+    const char* hs=p+3;
+    const char* ps=strchr(hs,'/'); if(!ps) return -1;
+    char host[256]={0}; strncpy(host,hs,(int)(ps-hs));
+    const char* path=ps;
 
     HINTERNET hi=InternetOpenA("YeBaiAC/1.0",INTERNET_OPEN_TYPE_DIRECT,NULL,NULL,0);
-    if(!hi)return -1;
-    HINTERNET hc=InternetOpenUrlA(hi,url,NULL,0,INTERNET_FLAG_NO_CACHE_WRITE|INTERNET_FLAG_RELOAD|INTERNET_FLAG_NO_COOKIES,0);
+    if(!hi) return -1;
+    HINTERNET hc=InternetConnectA(hi,host,80,NULL,NULL,INTERNET_SERVICE_HTTP,0,0);
     if(!hc){InternetCloseHandle(hi);return -1;}
-
-    char hdrs[256];sprintf(hdrs,"Content-Type: application/x-www-form-urlencoded\r\nContent-Length: %d",dataLen);
     HINTERNET hReq=HttpOpenRequestA(hc,"POST",path,"HTTP/1.1",NULL,NULL,
-        INTERNET_FLAG_NO_CACHE_WRITE|INTERNET_FLAG_RELOAD|INTERNET_FLAG_NO_COOKIES,0);
+        INTERNET_FLAG_NO_CACHE_WRITE|INTERNET_FLAG_RELOAD,0);
     if(!hReq){InternetCloseHandle(hc);InternetCloseHandle(hi);return -1;}
 
+    char hdrs[256];
+    sprintf(hdrs,"Content-Type: application/x-www-form-urlencoded\r\nContent-Length: %d",dataLen);
     BOOL ok=HttpSendRequestA(hReq,hdrs,-1,(LPVOID)data,dataLen);
-    if(!ok){InternetCloseHandle(hReq);InternetCloseHandle(hc);InternetCloseHandle(hi);return -1;}
-
-    DWORD br=0;int tot=0;
-    while(InternetReadFile(hReq,resp+tot,respSize-tot, &br) && br > 0) {
-        tot += (int)br;
-        if (tot >= respSize - 1) break;
+    if(!ok){
+        DWORD gle=GetLastError();
+        InternetCloseHandle(hReq);InternetCloseHandle(hc);InternetCloseHandle(hi);
+        return -1;
     }
-    resp[tot] = 0;
-    InternetCloseHandle(hReq);
-    InternetCloseHandle(hc);
-    InternetCloseHandle(hi);
+
+    DWORD br=0; int tot=0;
+    while(InternetReadFile(hReq,resp+tot,respSize-tot-1,&br) && br>0){
+        tot+=(int)br; resp[tot]=0;
+        if(tot>=respSize-1) break;
+    }
+    resp[tot]=0;
+    InternetCloseHandle(hReq); InternetCloseHandle(hc); InternetCloseHandle(hi);
     return 0;
 }
 
@@ -407,8 +408,9 @@ static int VerifyKamiV2(const char* kami) {
     int r = HttpPost(url, encrypted, enclen, resp, sizeof(resp));
     free(encrypted);
 
-    if (r != 0) { AddLog(L"[!] 网络连接失败"); return -1; }
+    if (r != 0) { AddLog(L"[!] 网络连接失败"); strcpy(g_LastResp, "(network error)"); return -1; }
     AddLog(L"[*] 服务器响应: %.200s", resp);
+    strncpy(g_LastResp, resp, sizeof(g_LastResp)-1);
 
     // V2 返回的是加密的，需要解密... 先尝试直接解析 JSON（如果不加密的话）
     int code = JInt(resp, "code");
@@ -450,9 +452,13 @@ static LRESULT CALLBACK LoginProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             20, 52, 260, 24, hwnd, (HMENU)1, NULL, NULL);
         HWND hBtn = CreateWindowW(L"button", L"登录", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
             120, 90, 80, 30, hwnd, (HMENU)2, NULL, NULL);
+        HWND hStatus = CreateWindowW(L"static", L"",
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            20, 125, 280, 30, hwnd, (HMENU)3, NULL, NULL);
         SendMessageW(GetDlgItem(hwnd, 1), WM_SETFONT, (WPARAM)hF, TRUE);
         SendMessageW(GetDlgItem(hwnd, 2), WM_SETFONT, (WPARAM)hF, TRUE);
         SendMessageW(hBtn, WM_SETFONT, (WPARAM)hF, TRUE);
+        SendMessageW(hStatus, WM_SETFONT, (WPARAM)hF, TRUE);
         SetFocus(g_hLoginEdit);
         return 0;
     }
@@ -465,7 +471,13 @@ static LRESULT CALLBACK LoginProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             int ok = VerifyKamiV2(ka);
             if (ok == 0) { g_LoginOK = 1; MessageBoxW(hwnd, L"验证成功!", L"夜白过检测", MB_OK | MB_ICONINFORMATION);
                 DestroyWindow(hwnd); }
-            else { MessageBoxW(hwnd, L"验证失败", L"夜白过检测", MB_OK | MB_ICONERROR); EnableWindow(GetDlgItem(hwnd, 2), 1); }
+            else {
+                wchar_t wstatus[512] = {0};
+                mbstowcs(wstatus, g_LastResp, (sizeof(wstatus)/sizeof(wchar_t)) - 1);
+                SetWindowTextW(GetDlgItem(hwnd, 3), wstatus);
+                MessageBoxW(hwnd, L"验证失败", L"夜白过检测", MB_OK | MB_ICONERROR);
+                EnableWindow(GetDlgItem(hwnd, 2), 1);
+            }
             return 0;
         }
     }
